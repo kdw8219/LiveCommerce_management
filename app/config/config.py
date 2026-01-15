@@ -1,0 +1,1 @@
+INTENTS = ("delivery_status", "order_status", "smalltalk", "fallback")
