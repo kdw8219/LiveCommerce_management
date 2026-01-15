@@ -1,14 +1,9 @@
-import os
+
 from dotenv import load_dotenv
-from openai import OpenAI
 from fastapi import FastAPI
 from app.api.v1.route import api_router as MainRouter
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-default-api-key")
-MODEL = os.getenv("MODEL", "gpt-4")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 app = FastAPI(title="jooneyshop_chatbot", version="0.0.1")
 app.include_router(router=MainRouter, prefix="/api/v1")
