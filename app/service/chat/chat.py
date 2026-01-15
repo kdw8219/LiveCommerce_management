@@ -7,8 +7,7 @@ from app.model.chat.chat_response import ChatResponse
 
 from app.client.llm.chatgpt import call_llm
 
-
-INTENTS = ("delivery_status", "order_status", "smalltalk", "fallback")
+import app.config.config as configs
 
 async def chat_service(req: ChatRequest) -> ChatResponse:
     intent = await _detect_intent_llm(req.message)
@@ -32,7 +31,7 @@ async def _detect_intent_llm(message: str) -> str:
         return "fallback"
 
     intent = data.get("intent", "fallback")
-    if intent not in INTENTS:
+    if intent not in configs.INTENTS:
         return "fallback"
     return intent
 
