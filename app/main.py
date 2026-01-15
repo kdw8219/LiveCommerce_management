@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 from fastapi import FastAPI
-from app.api.v1 import router as MainRouter
+from app.api.v1.route import api_router as MainRouter
 
 load_dotenv()
 
