@@ -97,5 +97,6 @@ Content-Type: application/json
 ## 테스트
 
 ```
-pytest
+python -m pytest
+python -m pytest --cov=app --cov-report=term-missing
 ```
