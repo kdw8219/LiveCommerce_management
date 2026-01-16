@@ -79,13 +79,13 @@ async def test_chat_service_fallback_status_success_check(monkeypatch):
     assert data["session_id"] == "chat_session"
     assert data["usage"] == ["mock"]
     
-@pytest.mark.asyncio
-async def test_delivery_status_service(monkeypatch):
-    # # TODO: session_id 기반으로 주문/배송 조회 로직 연결
-    # return ChatResponse(
-    #     session_id=req.session_id,
-    #     reply="배송 상태 조회를 진행할게요. 주문번호나 운송장 번호를 알려주세요.",
-    #     usage=[],
-    # )
+# @pytest.mark.asyncio
+# async def test_delivery_status_service(monkeypatch):
+#     # # TODO: session_id 기반으로 주문/배송 조회 로직 연결
+#     # return ChatResponse(
+#     #     session_id=req.session_id,
+#     #     reply="배송 상태 조회를 진행할게요. 주문번호나 운송장 번호를 알려주세요.",
+#     #     usage=[],
+#     # )
     
-    response = await chat_module.delivery_status_service()
+#     response = await chat_module.delivery_status_service()
