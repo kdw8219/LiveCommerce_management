@@ -1,0 +1,5 @@
+services:
+  grpc-robot-gateway:
+    image: ghcr.io/kdw8219/commerce_management:latest
+    env_file:
+      - ./apps/env/prd/commerce_management.env
