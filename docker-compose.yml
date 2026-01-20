@@ -1,0 +1,11 @@
+version: '3.9'
+
+services:
+  commerce_management:
+    ports:
+      - "8000:8000"
+    expose:
+      - "8000"
+    depends_on:
+      kafka-broker:
+        condition: service_healthy
