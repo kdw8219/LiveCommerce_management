@@ -1,5 +1,10 @@
 # apps/sns-connector/app/main.py
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from .services.common import close_clients
 from .services.instagram import router as instagram_router
