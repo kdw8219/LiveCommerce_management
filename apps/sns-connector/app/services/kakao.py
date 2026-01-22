@@ -1,24 +1,19 @@
-# apps/kakao-connector/main.py
 import asyncio
 import base64
 import hmac
 import hashlib
-import logging
 import os
 import uuid
 
-import httpx
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
+from redis import Redis
 
-app = FastAPI()
-logger = logging.getLogger(__name__)
-commerce_base_url = os.getenv("COMMERCE_MANAGEMENT_URL", "http://commerce_management:8000")
-commerce_client = httpx.AsyncClient(timeout=5.0)
+from ..utils import append_message, flush_buffer, should_flush
+from .common import call_commerce_management, logger
 
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    await commerce_client.aclose()
+router = APIRouter()
+BUFFER_ENABLED = os.getenv("KAKAO_BUFFER_ENABLED", "") == "1"
+redis_client = Redis(host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", "6379")), decode_responses=True) if BUFFER_ENABLED else None
 
 
 def verify_signature(body: bytes, signature: str, secret: str) -> bool:
@@ -26,33 +21,21 @@ def verify_signature(body: bytes, signature: str, secret: str) -> bool:
     expected = base64.b64encode(mac).decode()
     return hmac.compare_digest(expected, signature.strip())
 
+
 def kakao_response(text: str) -> dict:
     return {
         "version": "2.0",
-        "template": {
-            "outputs": [
-                {"simpleText": {"text": text}}
-            ]
-        }
+        "template": {"outputs": [{"simpleText": {"text": text}}]},
     }
 
-async def call_commerce_management(payload: dict) -> str:
-    user_message = payload.get("userRequest", {}).get("utterance", "")
-    user_id = payload.get("userRequest", {}).get("user", {}).get("id", "unknown")
-    try:
-        response = await commerce_client.post(
-            f"{commerce_base_url}/api/v1/chat",
-            json={"session_id": user_id, "message": user_message},
-        )
-        if response.status_code == 200:
-            return response.json().get("reply", "말씀하신 내용 확인중입니다. 곧 회신 드릴게요.")
-    except httpx.RequestError:
-        logger.exception("commerce_management request failed")
-    return "말씀하신 내용 확인중입니다. 곧 회신 드릴게요."
+def has_end_signal(text: str) -> bool:
+    return any(token in text for token in ["완료", "이상입니다", "끝", "요청드립니다", "해주시겠어요", "부탁드려요"])
+
 
 async def send_followup(user_id: str, text: str) -> None:
     # TODO: 카카오 채널 발신 API 호출로 교체
     logger.info("followup to user=%s text=%s", user_id, text)
+
 
 async def handle_long_running(task: asyncio.Task, user_id: str, request_id: str) -> None:
     try:
@@ -62,7 +45,7 @@ async def handle_long_running(task: asyncio.Task, user_id: str, request_id: str)
         logger.exception("failed followup request_id=%s user=%s", request_id, user_id)
 
 
-@app.post("/webhook/kakao")
+@router.post("/webhook/kakao")
 async def kakao_webhook(
     request: Request,
     x_kakao_signature: str = Header(default=""),
@@ -122,7 +105,17 @@ async def kakao_webhook(
         user_request["utterance"] = user_message
     request_id = str(uuid.uuid4())
 
-    task = asyncio.create_task(call_commerce_management(payload))
+    if BUFFER_ENABLED and user_message and redis_client is not None:
+        append_message(redis_client, user_id, user_message)
+        if not (has_end_signal(user_message) or should_flush(redis_client, user_id)):
+            return kakao_response("")
+        merged = flush_buffer(redis_client, user_id)
+        if not merged:
+            return kakao_response("요청을 처리 중입니다.")
+        user_message = merged
+        user_request["utterance"] = merged
+
+    task = asyncio.create_task(call_commerce_management(user_id, user_message))
     try:
         # 5초 제한을 고려해 내부 처리에 타임아웃 적용
         bot_reply = await asyncio.wait_for(
