@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable
+from typing import list, dict, Any
 
 from app.model.chat.chat_request import ChatRequest
 from app.model.chat.chat_response import ChatResponse
@@ -96,6 +97,27 @@ async def fallback_service(req: ChatRequest) -> ChatResponse:
         usage=[],
     )
 
+async def call_sheet_compose_llm(message:str) -> list[list[str]]:
+    system_prompt = (
+        "채팅 메시지 전체를 전달해줄건데, 그 중에서 주문 정보만 추려내는거야."
+        "이 때 포맷은 일반적으로 인스타아이디 카톡아이디 주문아이템 색상 이런 식이야"
+        "이런 내용인 걸 문맥의 의도를 보고 딱 주문한다 싶은 내용만 추려줘."
+        "그리고 한 사람이 여럿 주문하는 경우가 있단 말이야? 그런 사람들의 주문 건은 모아줘야해"
+        "응답은 여러 줄의 주문 건일텐데, 각 줄의 구성은 이렇게 해줘"
+        "공란(""), 인스타아이디 카톡아이디, 주문아이템, 색상, 공란(""), 공란("")"
+    )
+
+    raw = await asyncio.to_thread(call_llm, system_prompt, message)
+    
+    print(raw)
+    
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+    return data
+
 async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     # check user is in DB for this feature only
     result = await asyncio.to_thread(_ensure_user, req.session_id)
@@ -107,7 +129,7 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
             usage=[],
         )
     
-    #do something
+    await call_sheet_compose_llm(req.message)
     
     return ChatResponse(
         session_id=req.session_id,
