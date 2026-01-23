@@ -9,7 +9,7 @@ from app.client.llm.chatgpt import call_llm
 
 import app.config.config as configs
 
-async def chat_service(req: ChatRequest) -> ChatResponse:
+async def ai_service(req: ChatRequest) -> ChatResponse:
     intent = await _detect_intent_llm(req.message)
     handler = _get_intent_handler(intent)
     return await handler(req)
@@ -43,6 +43,8 @@ def _get_intent_handler(intent: str) -> Callable[[ChatRequest], "asyncio.Future[
         return order_status_service
     if intent == "smalltalk":
         return smalltalk_service
+    if intent == "compose_sheet":
+        return sheet_compose_service
     return fallback_service
 
 
@@ -73,6 +75,13 @@ async def smalltalk_service(req: ChatRequest) -> ChatResponse:
 
 
 async def fallback_service(req: ChatRequest) -> ChatResponse:
+    return ChatResponse(
+        session_id=req.session_id,
+        reply="요청을 이해하기 어려워요. 주문/배송 관련 질문인지 알려줄 수 있을까요?",
+        usage=[],
+    )
+
+async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     return ChatResponse(
         session_id=req.session_id,
         reply="요청을 이해하기 어려워요. 주문/배송 관련 질문인지 알려줄 수 있을까요?",

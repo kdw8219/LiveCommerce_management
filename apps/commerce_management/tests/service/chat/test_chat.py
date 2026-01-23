@@ -6,7 +6,7 @@ from app.model.chat.chat_response import ChatResponse
 from app.model.chat.chat_request import ChatRequest
 
 @pytest.mark.asyncio
-async def test_chat_service_smalltalk_success_check(monkeypatch):
+async def test_ai_service_smalltalk_success_check(monkeypatch):
     async def fake_detect_intent(_):
         return "smalltalk"
     
@@ -16,7 +16,7 @@ async def test_chat_service_smalltalk_success_check(monkeypatch):
     monkeypatch.setattr(chat_module, "_detect_intent_llm", fake_detect_intent)
     monkeypatch.setattr(chat_module, "smalltalk_service", fake_smalltalk)
 
-    response = await chat_module.chat_service(ChatRequest(session_id="chat_session", message="smalltalk", context=["previous"]))
+    response = await chat_module.ai_service(ChatRequest(session_id="chat_session", user_id="tempuser", message="smalltalk", context=["previous"]))
     
     data = json.loads(response.model_dump_json())
     assert data["reply"] == "patched"
@@ -25,7 +25,7 @@ async def test_chat_service_smalltalk_success_check(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_service_delivery_status_success_check(monkeypatch):
+async def test_ai_service_delivery_status_success_check(monkeypatch):
     async def fake_detect_intent(_):
         return "delivery_status"
     
@@ -35,7 +35,7 @@ async def test_chat_service_delivery_status_success_check(monkeypatch):
     monkeypatch.setattr(chat_module, "_detect_intent_llm", fake_detect_intent)
     monkeypatch.setattr(chat_module, "delivery_status_service", fake_delivery_status)
 
-    response = await chat_module.chat_service(ChatRequest(session_id="chat_session", message="delivery check", context=["previous"]))
+    response = await chat_module.ai_service(ChatRequest(session_id="chat_session", user_id="tempuser",message="delivery check", context=["previous"]))
     
     data = json.loads(response.model_dump_json())
     assert data["reply"] == "patched"
@@ -44,7 +44,7 @@ async def test_chat_service_delivery_status_success_check(monkeypatch):
     
 
 @pytest.mark.asyncio
-async def test_chat_service_order_status_success_check(monkeypatch):
+async def test_ai_service_order_status_success_check(monkeypatch):
     async def fake_detect_intent(_):
         return "order_status"
     
@@ -54,7 +54,7 @@ async def test_chat_service_order_status_success_check(monkeypatch):
     monkeypatch.setattr(chat_module, "_detect_intent_llm", fake_detect_intent)
     monkeypatch.setattr(chat_module, "order_status_service", fake_order_status)
 
-    response = await chat_module.chat_service(ChatRequest(session_id="chat_session", message="order check", context=["previous"]))
+    response = await chat_module.ai_service(ChatRequest(session_id="chat_session", user_id="tempuser", message="order check", context=["previous"]))
     
     data = json.loads(response.model_dump_json())
     assert data["reply"] == "patched"
@@ -62,7 +62,7 @@ async def test_chat_service_order_status_success_check(monkeypatch):
     assert data["usage"] == ["mock"]
     
 @pytest.mark.asyncio
-async def test_chat_service_fallback_status_success_check(monkeypatch):
+async def test_ai_service_fallback_status_success_check(monkeypatch):
     async def fake_detect_intent(_):
         return "fallback"
     
@@ -72,7 +72,7 @@ async def test_chat_service_fallback_status_success_check(monkeypatch):
     monkeypatch.setattr(chat_module, "_detect_intent_llm", fake_detect_intent)
     monkeypatch.setattr(chat_module, "fallback_service", fake_fallback_status)
 
-    response = await chat_module.chat_service(ChatRequest(session_id="chat_session", message="order check", context=["previous"]))
+    response = await chat_module.ai_service(ChatRequest(session_id="chat_session", user_id="tempuser", message="order check", context=["previous"]))
     
     data = json.loads(response.model_dump_json())
     assert data["reply"] == "patched"
