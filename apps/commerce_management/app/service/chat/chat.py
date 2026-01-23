@@ -2,6 +2,8 @@ import asyncio
 import json
 from collections.abc import Callable
 from typing import list, dict, Any
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 from app.model.chat.chat_request import ChatRequest
 from app.model.chat.chat_response import ChatResponse
@@ -99,12 +101,33 @@ async def fallback_service(req: ChatRequest) -> ChatResponse:
 
 async def call_sheet_compose_llm(message:str) -> list[list[str]]:
     system_prompt = (
-        "채팅 메시지 전체를 전달해줄건데, 그 중에서 주문 정보만 추려내는거야."
-        "이 때 포맷은 일반적으로 인스타아이디 카톡아이디 주문아이템 색상 이런 식이야"
-        "이런 내용인 걸 문맥의 의도를 보고 딱 주문한다 싶은 내용만 추려줘."
-        "그리고 한 사람이 여럿 주문하는 경우가 있단 말이야? 그런 사람들의 주문 건은 모아줘야해"
-        "응답은 여러 줄의 주문 건일텐데, 각 줄의 구성은 이렇게 해줘"
-        "공란(""), 인스타아이디 카톡아이디, 주문아이템, 색상, 공란(""), 공란("")"
+        "채팅 메시지 전체를 전달할 것이다."
+        "그 중에서 문맥상 '주문'으로 명확히 판단되는 내용만 추려라."
+
+        "주문 정보는 일반적으로"
+        "인스타아이디, 카카오톡아이디, 주문아이템, 색상"
+        "으로 구성되어 있다."
+
+        "단, 인스타아이디와 카카오톡아이디는 항상 하나의 문자열로 결합해서 출력해야 하며, 형식은 다음과 같다."
+
+        "'인스타아이디 카카오톡아이디'"
+
+        "(공백 하나로만 구분하고 절대 분리하지 말 것)"
+
+        "한 사람이 여러 개를 주문한 경우, 사람 기준으로 주문을 인식하되 출력은 주문 건 단위로 각각 한 줄씩 출력한다."
+
+        "출력은 JSON만 반환한다. 주문 목록은 배열이며, 각 주문은 아래 순서를 가진 배열이어야 한다."
+
+"["
+  "'',                       // 항상 빈 문자열"
+  "'인스타아이디 카카오톡아이디',"
+  "'주문아이템',"
+  "'색상',"
+  "''",
+  "''"
+"]"
+
+        "설명, 주석, 자연어 문장은 절대 포함하지 말 것."
     )
 
     raw = await asyncio.to_thread(call_llm, system_prompt, message)
@@ -116,7 +139,9 @@ async def call_sheet_compose_llm(message:str) -> list[list[str]]:
     except json.JSONDecodeError:
         return {}
 
-    return data
+    result = data.get("orders", {})
+
+    return result
 
 async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     # check user is in DB for this feature only
@@ -129,7 +154,20 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
             usage=[],
         )
     
-    await call_sheet_compose_llm(req.message)
+    ai_result = await call_sheet_compose_llm(req.message)
+    
+    scope = [
+    'https://spreadsheets.google.com/feeds',
+    'https://www.googleapis.com/auth/drive'
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name('creds.json', scope)
+    client = gspread.authorize(creds)
+    
+    spreadsheet = client.open("준이샵 라방 시작 24.10/8")
+    new_sheet = spreadsheet.add_worksheet(title="NewTab")
+    
+    for i in range(0, len(ai_result)):
+        new_sheet.append(ai_result[i])
     
     return ChatResponse(
         session_id=req.session_id,
