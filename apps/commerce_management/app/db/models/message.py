@@ -18,5 +18,5 @@ class Message(Base):
     # Optional intent tag for analytics/routing
     intent = Column(String, nullable=True)
     # Model metadata (tokens, model name, channel, etc.)
-    metadata = Column(JSONB, nullable=True)
+    meta = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
