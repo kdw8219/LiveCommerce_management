@@ -1,6 +1,9 @@
 import asyncio
 import json
 from collections.abc import Callable
+from typing import list, dict, Any
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 from app.model.chat.chat_request import ChatRequest
 from app.model.chat.chat_response import ChatResponse
@@ -96,6 +99,50 @@ async def fallback_service(req: ChatRequest) -> ChatResponse:
         usage=[],
     )
 
+async def call_sheet_compose_llm(message:str) -> list[list[str]]:
+    system_prompt = (
+        "채팅 메시지 전체를 전달할 것이다."
+        "그 중에서 문맥상 '주문'으로 명확히 판단되는 내용만 추려라."
+
+        "주문 정보는 일반적으로"
+        "인스타아이디, 카카오톡아이디, 주문아이템, 색상"
+        "으로 구성되어 있다."
+
+        "단, 인스타아이디와 카카오톡아이디는 항상 하나의 문자열로 결합해서 출력해야 하며, 형식은 다음과 같다."
+
+        "'인스타아이디 카카오톡아이디'"
+
+        "(공백 하나로만 구분하고 절대 분리하지 말 것)"
+
+        "한 사람이 여러 개를 주문한 경우, 사람 기준으로 주문을 인식하되 출력은 주문 건 단위로 각각 한 줄씩 출력한다."
+
+        "출력은 JSON만 반환한다. 주문 목록은 배열이며, 각 주문은 아래 순서를 가진 배열이어야 한다."
+
+"["
+  "'',                       // 항상 빈 문자열"
+  "'인스타아이디 카카오톡아이디',"
+  "'주문아이템',"
+  "'색상',"
+  "''",
+  "''"
+"]"
+
+        "설명, 주석, 자연어 문장은 절대 포함하지 말 것."
+    )
+
+    raw = await asyncio.to_thread(call_llm, system_prompt, message)
+    
+    print(raw)
+    
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+    result = data.get("orders", {})
+
+    return result
+
 async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     # check user is in DB for this feature only
     result = await asyncio.to_thread(_ensure_user, req.session_id)
@@ -107,7 +154,20 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
             usage=[],
         )
     
-    #do something
+    ai_result = await call_sheet_compose_llm(req.message)
+    
+    scope = [
+    'https://spreadsheets.google.com/feeds',
+    'https://www.googleapis.com/auth/drive'
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name('creds.json', scope)
+    client = gspread.authorize(creds)
+    
+    spreadsheet = client.open("준이샵 라방 시작 24.10/8")
+    new_sheet = spreadsheet.add_worksheet(title="NewTab")
+    
+    for i in range(0, len(ai_result)):
+        new_sheet.append(ai_result[i])
     
     return ChatResponse(
         session_id=req.session_id,
