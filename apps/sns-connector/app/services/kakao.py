@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from redis import Redis
 
 from ..utils import append_message, flush_buffer, should_flush
+from ..utils.buffer import FLUSH_SILENCE_SEC
 from .common import call_commerce_management, logger
 
 router = APIRouter()
@@ -35,6 +36,19 @@ def has_end_signal(text: str) -> bool:
 async def send_followup(user_id: str, text: str) -> None:
     # TODO: 카카오 채널 발신 API 호출로 교체
     logger.info("followup to user=%s text=%s", user_id, text)
+
+
+async def flush_after_silence(user_id: str) -> None:
+    await asyncio.sleep(FLUSH_SILENCE_SEC)
+    if redis_client is None:
+        return
+    if not should_flush(redis_client, user_id):
+        return
+    merged = flush_buffer(redis_client, user_id)
+    if not merged:
+        return
+    reply = await call_commerce_management(user_id, merged)
+    await send_followup(user_id, reply)
 
 
 async def handle_long_running(task: asyncio.Task, user_id: str, request_id: str) -> None:
@@ -108,6 +122,7 @@ async def kakao_webhook(
     if BUFFER_ENABLED and user_message and redis_client is not None:
         append_message(redis_client, user_id, user_message)
         if not (has_end_signal(user_message) or should_flush(redis_client, user_id)):
+            asyncio.create_task(flush_after_silence(user_id))
             return kakao_response("")
         merged = flush_buffer(redis_client, user_id)
         if not merged:
