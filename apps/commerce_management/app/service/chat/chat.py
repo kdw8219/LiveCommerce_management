@@ -13,18 +13,21 @@ from app.db.models.user import User
 import app.config.config as configs
 
 async def ai_service(req: ChatRequest) -> ChatResponse:
-    await asyncio.to_thread(_ensure_user, req.session_id)
     intent = await _detect_intent_llm(req.message)
     handler = _get_intent_handler(intent)
     return await handler(req)
 
-def _ensure_user(user_id: str) -> None:
+def _ensure_user(user_id: str) -> bool:
     if not user_id:
-        return
+        return False
     with session_scope() as db:
         existing = db.execute(select(User).where(User.user_id == user_id)).scalar_one_or_none()
+        
         if existing is None:
-            db.add(User(user_id=user_id))
+            return False
+        else:
+            return True
+        
 
 async def _detect_intent_llm(message: str) -> str:
     system_prompt = (
@@ -94,11 +97,20 @@ async def fallback_service(req: ChatRequest) -> ChatResponse:
     )
 
 async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
+    # check user is in DB for this feature only
+    result = await asyncio.to_thread(_ensure_user, req.session_id)
     
-    #check user is in DB
+    if result is False:
+        return ChatResponse(
+            session_id=req.session_id,
+            reply="해당 사용자는 사용할 수 없는 기능입니다!",
+            usage=[],
+        )
+    
+    #do something
     
     return ChatResponse(
         session_id=req.session_id,
-        reply="요청을 이해하기 어려워요. 주문/배송 관련 질문인지 알려줄 수 있을까요?",
+        reply="동작 완료! Google Sheet 확인을 부탁드립니다.",
         usage=[],
     )
