@@ -79,13 +79,21 @@ async def test_ai_service_fallback_status_success_check(monkeypatch):
     assert data["session_id"] == "chat_session"
     assert data["usage"] == ["mock"]
     
-# @pytest.mark.asyncio
-# async def test_delivery_status_service(monkeypatch):
-#     # # TODO: session_id 기반으로 주문/배송 조회 로직 연결
-#     # return ChatResponse(
-#     #     session_id=req.session_id,
-#     #     reply="배송 상태 조회를 진행할게요. 주문번호나 운송장 번호를 알려주세요.",
-#     #     usage=[],
-#     # )
     
-#     response = await chat_module.delivery_status_service()
+@pytest.mark.asyncio
+async def test_ai_service_sheet_compose_status_success_check(monkeypatch):
+    async def fake_detect_intent(_):
+        return "sheet_compose"
+    
+    async def fake_sheet_compose_status(req):
+        return ChatResponse(session_id=req.session_id, reply="patched", usage=["mock"])
+    
+    monkeypatch.setattr(chat_module, "_detect_intent_llm", fake_detect_intent)
+    monkeypatch.setattr(chat_module, "sheet_compose_service", fake_sheet_compose_status)
+
+    response = await chat_module.ai_service(ChatRequest(session_id="chat_session", user_id="tempuser", message="order check", context=["previous"]))
+    
+    data = json.loads(response.model_dump_json())
+    assert data["reply"] == "patched"
+    assert data["session_id"] == "chat_session"
+    assert data["usage"] == ["mock"]
