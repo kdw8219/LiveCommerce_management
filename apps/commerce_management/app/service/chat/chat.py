@@ -18,7 +18,7 @@ async def _detect_intent_llm(message: str) -> str:
     system_prompt = (
         "You are an intent classifier for a live commerce chatbot. "
         "Choose exactly one intent from: delivery_status, order_status, "
-        "smalltalk, fallback. "
+        "smalltalk, sheet_compose, fallback. "
         "Return JSON only: {\"intent\":\"<one_of_intents>\"}. "
         "If ambiguous, use fallback."
     )
@@ -43,7 +43,7 @@ def _get_intent_handler(intent: str) -> Callable[[ChatRequest], "asyncio.Future[
         return order_status_service
     if intent == "smalltalk":
         return smalltalk_service
-    if intent == "compose_sheet":
+    if intent == "sheet_compose":
         return sheet_compose_service
     return fallback_service
 
