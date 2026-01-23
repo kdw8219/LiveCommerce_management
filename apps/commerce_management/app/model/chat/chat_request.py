@@ -3,5 +3,6 @@ from typing import List, Optional
 
 class ChatRequest(BaseModel):
     session_id: str = Field(..., description="Unique identifier for the chat session")
+    user_id:str = Field(..., description="User's id")
     message: str = Field(..., description="User's message to the chatbot")
     context: Optional[List[str]] = None

@@ -1,1 +1,1 @@
-INTENTS = ("delivery_status", "order_status", "smalltalk", "fallback")
+INTENTS = ("delivery_status", "order_status", "smalltalk", "fallback", "sheet_compose")

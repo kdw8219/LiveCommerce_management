@@ -4,21 +4,33 @@ from collections.abc import Callable
 
 from app.model.chat.chat_request import ChatRequest
 from app.model.chat.chat_response import ChatResponse
+from sqlalchemy import select
 
 from app.client.llm.chatgpt import call_llm
+from app.client.db.psql import session_scope
+from app.db.models.user import User
 
 import app.config.config as configs
 
-async def chat_service(req: ChatRequest) -> ChatResponse:
+async def ai_service(req: ChatRequest) -> ChatResponse:
+    await asyncio.to_thread(_ensure_user, req.session_id)
     intent = await _detect_intent_llm(req.message)
     handler = _get_intent_handler(intent)
     return await handler(req)
+
+def _ensure_user(user_id: str) -> None:
+    if not user_id:
+        return
+    with session_scope() as db:
+        existing = db.execute(select(User).where(User.user_id == user_id)).scalar_one_or_none()
+        if existing is None:
+            db.add(User(user_id=user_id))
 
 async def _detect_intent_llm(message: str) -> str:
     system_prompt = (
         "You are an intent classifier for a live commerce chatbot. "
         "Choose exactly one intent from: delivery_status, order_status, "
-        "smalltalk, fallback. "
+        "smalltalk, sheet_compose, fallback. "
         "Return JSON only: {\"intent\":\"<one_of_intents>\"}. "
         "If ambiguous, use fallback."
     )
@@ -43,6 +55,8 @@ def _get_intent_handler(intent: str) -> Callable[[ChatRequest], "asyncio.Future[
         return order_status_service
     if intent == "smalltalk":
         return smalltalk_service
+    if intent == "sheet_compose":
+        return sheet_compose_service
     return fallback_service
 
 
@@ -73,6 +87,16 @@ async def smalltalk_service(req: ChatRequest) -> ChatResponse:
 
 
 async def fallback_service(req: ChatRequest) -> ChatResponse:
+    return ChatResponse(
+        session_id=req.session_id,
+        reply="요청을 이해하기 어려워요. 주문/배송 관련 질문인지 알려줄 수 있을까요?",
+        usage=[],
+    )
+
+async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
+    
+    #check user is in DB
+    
     return ChatResponse(
         session_id=req.session_id,
         reply="요청을 이해하기 어려워요. 주문/배송 관련 질문인지 알려줄 수 있을까요?",
