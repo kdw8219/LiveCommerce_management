@@ -128,6 +128,8 @@ async def call_sheet_compose_llm(message:str) -> list[list[str]]:
 "]"
 
         "설명, 주석, 자연어 문장은 절대 포함하지 말 것."
+        "위 내용은 orders에 넣어서 보내주고, 만약 구분이 애매한 문장이 있을 경우 fallbacks에 넣어서 전달할 것"
+        "애매한 항목 중에는 품목이 구체적인 상품명이 아닌 것들도 포함해줘(ex. 언니가 들고 있는 옷, 브라운 주문이요)"
     )
 
     raw = await asyncio.to_thread(call_llm, system_prompt, message)
@@ -168,6 +170,14 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     
     for i in range(0, len(ai_result)):
         new_sheet.append(ai_result[i])
+    
+    new_sheet.format("A", {
+        "backgroundColor": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 0.0
+        }
+    })
     
     return ChatResponse(
         session_id=req.session_id,
