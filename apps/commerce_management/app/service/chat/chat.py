@@ -99,7 +99,7 @@ async def fallback_service(req: ChatRequest) -> ChatResponse:
         usage=[],
     )
 
-async def call_sheet_compose_llm(message:str) -> list[list[str]]:
+async def call_sheet_compose_llm(message: str) -> dict[str, list]:
     system_prompt = (
         "채팅 메시지 전체를 전달할 것이다."
         "그 중에서 문맥상 '주문'으로 명확히 판단되는 내용만 추려라."
@@ -139,11 +139,17 @@ async def call_sheet_compose_llm(message:str) -> list[list[str]]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
+        return {"orders": [], "fallbacks": []}
 
-    result = data.get("orders", {})
+    orders = data.get("orders", [])
+    fallbacks = data.get("fallbacks", [])
 
-    return result
+    if not isinstance(orders, list):
+        orders = []
+    if not isinstance(fallbacks, list):
+        fallbacks = []
+
+    return {"orders": orders, "fallbacks": fallbacks}
 
 async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     # check user is in DB for this feature only
@@ -157,6 +163,8 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
         )
     
     ai_result = await call_sheet_compose_llm(req.message)
+    orders = ai_result.get("orders", [])
+    fallbacks= ai_result.get("fallbacks", [])
     
     scope = [
     'https://spreadsheets.google.com/feeds',
@@ -168,8 +176,15 @@ async def sheet_compose_service(req: ChatRequest) -> ChatResponse:
     spreadsheet = client.open("준이샵 라방 시작 24.10/8")
     new_sheet = spreadsheet.add_worksheet(title="NewTab")
     
-    for i in range(0, len(ai_result)):
-        new_sheet.append(ai_result[i])
+    for i in range(0, len(orders)):
+        new_sheet.append(orders[i])
+        
+    if len(fallbacks) != 0:
+        new_sheet.append([])
+        new_sheet.append(["", "실패 사례"])
+        
+        for i in range(0, len(fallbacks)):
+            new_sheet.append(["", fallbacks[i]])
     
     new_sheet.format("A", {
         "backgroundColor": {
