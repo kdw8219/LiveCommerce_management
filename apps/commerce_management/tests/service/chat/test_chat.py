@@ -92,6 +92,23 @@ def _make_spreadsheet(third_tab_rows: list[list[str]], days_ago: int = 3):
     ws3 = _StubWorksheet(_md_title(ref_date), third_tab_rows)
     return _StubSpreadsheet([ws1, ws2, ws3])
 
+def _make_dated_spreadsheet(date_to_rows: list[tuple[date, list[list[str]]]]):
+    worksheets = [_StubWorksheet(_md_title(d), rows) for (d, rows) in date_to_rows]
+    return _StubSpreadsheet(worksheets)
+
+
+@pytest.mark.asyncio
+async def test_parse_order_query_rule_range_and_item(monkeypatch):
+    async def fake_llm(_message: str):
+        return None
+
+    monkeypatch.setattr(chat_module, "_parse_order_query_llm", fake_llm)
+
+    query = await chat_module._parse_order_query("1/20부터 1/22까지 후드 주문 확인")
+    assert query["date_from"] is not None
+    assert query["date_to"] is not None
+    assert query["range_text"] == "1/20~1/22"
+
 
 @pytest.mark.asyncio
 async def test_delivery_status_keep(monkeypatch):
@@ -138,7 +155,35 @@ async def test_order_status_requests_payment_check_when_not_paid(monkeypatch):
         ChatRequest(session_id="s", user_id="user1", message="주문", context=None)
     )
     assert "입금" in res.reply and "확인" in res.reply
-    
+
+@pytest.mark.asyncio
+async def test_order_status_range_and_item_paid(monkeypatch):
+    async def fake_llm(_message: str):
+        return None
+
+    monkeypatch.setattr(chat_module, "_parse_order_query_llm", fake_llm)
+
+    d1 = date.today() - timedelta(days=4)
+    d2 = date.today() - timedelta(days=3)
+
+    rows_d1 = [
+        ["10000", "user1", "후드"],
+        ["16000", "user1", "후드"],
+    ]
+    rows_d2 = [
+        ["9000", "user1", "티셔츠"],
+        ["10000", "user1", "티셔츠"],
+    ]
+
+    stub = _make_dated_spreadsheet([(d1, rows_d1), (d2, rows_d2)])
+    monkeypatch.setattr(chat_module, "_get_spreadsheet", lambda: stub)
+
+    message = f"{_md_title(d1)}부터 {_md_title(d2)}까지 '후드' 주문 어때?"
+    res = await chat_module.order_status_service(
+        ChatRequest(session_id="s", user_id="user1", message=message, context=None)
+    )
+    assert "배송 완료" in res.reply or "배송된" in res.reply
+
 @pytest.mark.asyncio
 async def test_ai_service_fallback_status_success_check(monkeypatch):
     async def fake_detect_intent(_):

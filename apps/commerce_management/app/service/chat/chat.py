@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import gspread
@@ -21,6 +21,10 @@ import app.config.config as configs
 SPREADSHEET_NAME = "준이샵 라방 시작 24.10/8"
 COMPLETED_TAB_INDEX = 2  # "3번 탭" (0-based index)
 DATE_TITLE_RE = re.compile(r"^\s*(\d{1,2})\s*/\s*(\d{1,2})\s*$")
+DATE_TOKEN_RE = re.compile(r"(?P<m>\d{1,2})\s*/\s*(?P<d>\d{1,2})")
+RELATIVE_DAYS_RE = re.compile(r"(?P<n>\d{1,2})\s*일\s*전")
+RANGE_SEP_RE = re.compile(r"(?:~|\\-|부터|에서).*(?:까지)?")
+QUOTED_TEXT_RE = re.compile(r"[\"']([^\"']+)[\"']")
 
 async def ai_service(req: ChatRequest) -> ChatResponse:
     intent = await _detect_intent_llm(req.message)
@@ -58,6 +62,69 @@ def _parse_date_title(title: str) -> date | None:
         return date(date.today().year, month, day)
     except ValueError:
         return None
+
+
+def _parse_month_day_token(token: str) -> date | None:
+    m = DATE_TOKEN_RE.search(token or "")
+    if not m:
+        return None
+    try:
+        return date(date.today().year, int(m.group("m")), int(m.group("d")))
+    except ValueError:
+        return None
+
+
+def _parse_relative_dates(message: str) -> list[date]:
+    msg = message or ""
+    today = date.today()
+    dates: list[date] = []
+
+    if "오늘" in msg:
+        dates.append(today)
+    if "어제" in msg:
+        dates.append(today - timedelta(days=1))
+    if "그제" in msg:
+        dates.append(today - timedelta(days=2))
+
+    for m in RELATIVE_DAYS_RE.finditer(msg):
+        n = int(m.group("n"))
+        dates.append(today - timedelta(days=n))
+
+    return dates
+
+
+def _extract_dates_from_message(message: str) -> list[date]:
+    dates: list[date] = []
+    for m in DATE_TOKEN_RE.finditer(message or ""):
+        try:
+            dates.append(date(date.today().year, int(m.group("m")), int(m.group("d"))))
+        except ValueError:
+            continue
+    dates.extend(_parse_relative_dates(message))
+    # Deduplicate while preserving order.
+    seen: set[date] = set()
+    unique: list[date] = []
+    for d in dates:
+        if d not in seen:
+            seen.add(d)
+            unique.append(d)
+    return unique
+
+
+def _extract_item_from_message(message: str) -> str | None:
+    msg = message or ""
+    quoted = QUOTED_TEXT_RE.search(msg)
+    if quoted:
+        return quoted.group(1).strip()
+
+    # Heuristic: capture the noun phrase after common item cues.
+    m = re.search(
+        r"(?:상품|물건|아이템|제품|품목)\s*(?:은|는|이|가|을|를|:)?\s*([^\s,?.!]+)",
+        msg,
+    )
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -216,6 +283,153 @@ def _get_spreadsheet() -> gspread.Spreadsheet:
     return client.open(SPREADSHEET_NAME)
 
 
+def _dated_worksheets(spreadsheet: gspread.Spreadsheet) -> list[tuple[date, gspread.Worksheet]]:
+    dated: list[tuple[date, gspread.Worksheet]] = []
+    for ws in spreadsheet.worksheets():
+        parsed = _parse_date_title(ws.title)
+        if parsed:
+            dated.append((parsed, ws))
+    dated.sort(key=lambda item: item[0])
+    return dated
+
+
+def _format_date_md(d: date) -> str:
+    return f"{d.month}/{d.day}"
+
+
+def _short_range_text(d_from: date | None, d_to: date | None) -> str:
+    if d_from and d_to:
+        if d_from == d_to:
+            return _format_date_md(d_from)
+        return f"{_format_date_md(d_from)}~{_format_date_md(d_to)}"
+    if d_from:
+        return _format_date_md(d_from)
+    if d_to:
+        return _format_date_md(d_to)
+    return ""
+
+
+async def _parse_order_query_llm(message: str) -> dict[str, Any] | None:
+    """
+    LLM helper that extracts only structured query fields.
+    It is a fallback when rule-based parsing is incomplete.
+    """
+    system_prompt = (
+        "You extract structured query fields for commerce order lookups. "
+        "Return JSON only with this schema: "
+        "{\"date_from\":\"M/D|null\",\"date_to\":\"M/D|null\",\"item\":\"string|null\"}. "
+        "Use M/D without year. If unknown, use null."
+    )
+    try:
+        raw = await asyncio.to_thread(call_llm, system_prompt, message)
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+async def _parse_order_query(message: str) -> dict[str, Any]:
+    """
+    Combine rule-based extraction with a narrow LLM fallback.
+    """
+    dates = _extract_dates_from_message(message)
+    item = _extract_item_from_message(message)
+
+    date_from: date | None = None
+    date_to: date | None = None
+
+    if len(dates) >= 2 and RANGE_SEP_RE.search(message or ""):
+        sorted_dates = sorted(dates)
+        date_from, date_to = sorted_dates[0], sorted_dates[-1]
+    elif len(dates) >= 2:
+        sorted_dates = sorted(dates)
+        date_from, date_to = sorted_dates[0], sorted_dates[-1]
+    elif len(dates) == 1:
+        date_from = dates[0]
+        date_to = dates[0]
+
+    needs_llm = date_from is None and date_to is None or item is None
+    if needs_llm:
+        llm_data = await _parse_order_query_llm(message)
+        if llm_data:
+            if date_from is None and llm_data.get("date_from"):
+                date_from = _parse_month_day_token(str(llm_data.get("date_from")))
+            if date_to is None and llm_data.get("date_to"):
+                date_to = _parse_month_day_token(str(llm_data.get("date_to")))
+            if item is None:
+                llm_item = llm_data.get("item")
+                if isinstance(llm_item, str) and llm_item.strip():
+                    item = llm_item.strip()
+
+    # Normalize swapped ranges.
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "item": item,
+        "range_text": _short_range_text(date_from, date_to),
+    }
+
+
+def _worksheets_for_range(
+    spreadsheet: gspread.Spreadsheet, date_from: date | None, date_to: date | None
+) -> tuple[list[tuple[date, gspread.Worksheet]], date, date]:
+    """
+    Select worksheets that match the requested range.
+    Falls back to the completed tab when no date range is given.
+    """
+    if date_from is None and date_to is None:
+        ref_ws = _select_reference_worksheet(spreadsheet)
+        if ref_ws is None:
+            today = date.today()
+            return ([], today, today)
+        ref_date = _resolve_reference_date(spreadsheet, ref_ws)
+        return ([(ref_date, ref_ws)], ref_date, ref_date)
+
+    # If only one side is specified, treat it as a single-day query.
+    if date_from is None:
+        date_from = date_to
+    if date_to is None:
+        date_to = date_from
+    assert date_from is not None and date_to is not None
+
+    dated = _dated_worksheets(spreadsheet)
+    in_range = [(d, ws) for (d, ws) in dated if date_from <= d <= date_to]
+    if in_range:
+        return (in_range, date_from, date_to)
+
+    # If there is no exact range match, fall back to the latest sheet before the end date.
+    before_end = [(d, ws) for (d, ws) in dated if d <= date_to]
+    if before_end:
+        d, ws = before_end[-1]
+        return ([(d, ws)], d, d)
+
+    # Final fallback: completed tab or today.
+    ref_ws = _select_reference_worksheet(spreadsheet)
+    if ref_ws is None:
+        today = date.today()
+        return ([], today, today)
+    ref_date = _resolve_reference_date(spreadsheet, ref_ws)
+    return ([(ref_date, ref_ws)], ref_date, ref_date)
+
+
+def _group_matches_item(rows: list[list[Any]], start: int, end: int, item: str | None) -> bool:
+    if not item:
+        return True
+    needle = item.strip().lower()
+    if not needle:
+        return True
+    for idx in range(start, end + 1):
+        row_text = " ".join(str(c) for c in rows[idx]).lower()
+        if needle in row_text:
+            return True
+    return False
+
+
 def _sheet_status_for_user(user_id: str) -> dict[str, Any]:
     """
     Compute delivery/order status signals from the reference worksheet.
@@ -261,6 +475,91 @@ def _sheet_status_for_user(user_id: str) -> dict[str, Any]:
         "keep": keep,
         "order_date": order_date,
         "age_days": age_days,
+    }
+
+def _sheet_status_for_query(user_id: str, query: dict[str, Any]) -> dict[str, Any]:
+    """
+    Query-aware status across one or more worksheets.
+    """
+    spreadsheet = _get_spreadsheet()
+    targets, effective_from, effective_to = _worksheets_for_range(
+        spreadsheet, query.get("date_from"), query.get("date_to")
+    )
+    item = query.get("item")
+
+    if not targets:
+        today = date.today()
+        return {
+            "found": False,
+            "payment_confirmed": False,
+            "keep": False,
+            "order_date": today,
+            "age_days": 0,
+            "item_found": False,
+            "date_from": effective_from,
+            "date_to": effective_to,
+            "range_text": query.get("range_text", ""),
+        }
+
+    found_any = False
+    item_found = False
+    keep_any = False
+    paid_any = False
+    max_age_days = 0
+    matched_dates: list[date] = []
+
+    for ws_date, ws in targets:
+        rows = ws.get_all_values()
+        group = _find_user_group(rows, user_id)
+        if group is None:
+            continue
+
+        start, end = group
+        found_any = True
+
+        if not _group_matches_item(rows, start, end, item):
+            continue
+
+        item_found = True
+        matched_dates.append(ws_date)
+
+        keep = _group_contains_keep(rows, start, end)
+        paid = _is_payment_confirmed(rows, start, end)
+        keep_any = keep_any or keep
+        paid_any = paid_any or paid
+
+        age_days = (date.today() - ws_date).days
+        if age_days > max_age_days:
+            max_age_days = age_days
+
+    # If we found a user group but item filtering removed everything, report that separately.
+    if found_any and not item_found:
+        return {
+            "found": True,
+            "payment_confirmed": False,
+            "keep": False,
+            "order_date": effective_from,
+            "age_days": 0,
+            "item_found": False,
+            "date_from": effective_from,
+            "date_to": effective_to,
+            "range_text": query.get("range_text", ""),
+        }
+
+    # If nothing matched at all, fall back to the effective range date.
+    order_date = matched_dates[0] if matched_dates else effective_from
+
+    return {
+        "found": found_any,
+        "payment_confirmed": paid_any,
+        "keep": keep_any,
+        "order_date": order_date,
+        "age_days": max_age_days,
+        "item_found": item_found or not item,
+        "date_from": effective_from,
+        "date_to": effective_to,
+        "range_text": query.get("range_text", ""),
+        "item": item,
     }
 
 async def _detect_intent_llm(message: str) -> str:
@@ -331,7 +630,8 @@ async def delivery_status_service(req: ChatRequest) -> ChatResponse:
 
 async def order_status_service(req: ChatRequest) -> ChatResponse:
     try:
-        status = await asyncio.to_thread(_sheet_status_for_user, req.user_id)
+        query = await _parse_order_query(req.message)
+        status = await asyncio.to_thread(_sheet_status_for_query, req.user_id, query)
     except FileNotFoundError:
         return ChatResponse(
             session_id=req.session_id,
@@ -345,14 +645,20 @@ async def order_status_service(req: ChatRequest) -> ChatResponse:
             usage=[],
         )
 
-    if status["keep"]:
+    range_text = status.get("range_text") or ""
+    range_prefix = f"{range_text} 기준으로 보면, " if range_text else ""
+
+    if status["found"] and not status.get("item_found", True):
+        item = status.get("item") or "해당 상품"
+        reply = f"{range_prefix}{item} 주문은 확인되지 않았어요."
+    elif status["keep"]:
         reply = "입금은 확인되었고, 해당 상품은 이번 출고에서 킵 처리되어 있어요."
     elif status["payment_confirmed"] and status["age_days"] >= 2:
         reply = "입금이 확인되었고 주문일 기준 2~3일 경과 건이라 배송 완료로 보여요."
     elif status["payment_confirmed"]:
         reply = "입금이 확인되었어요. 주문 처리는 완료 단계로 보고 있어요."
     else:
-        reply = "입금이 아직 반영되지 않았을 수 있어요. 한번 더 확인 부탁드릴게요."
+        reply = f"{range_prefix}입금이 아직 반영되지 않았을 수 있어요. 한번 더 확인 부탁드릴게요."
 
     return ChatResponse(
         session_id=req.session_id,
