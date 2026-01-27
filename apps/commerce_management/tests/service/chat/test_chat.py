@@ -1,5 +1,6 @@
 import pytest
 import json
+from datetime import date, timedelta
 
 import app.service.chat.chat as chat_module
 from app.model.chat.chat_response import ChatResponse
@@ -61,6 +62,82 @@ async def test_ai_service_order_status_success_check(monkeypatch):
     assert data["reply"] == "patched"
     assert data["session_id"] == "chat_session"
     assert data["usage"] == ["mock"]
+
+
+class _StubWorksheet:
+    def __init__(self, title: str, rows: list[list[str]]):
+        self.title = title
+        self._rows = rows
+
+    def get_all_values(self):
+        return self._rows
+
+
+class _StubSpreadsheet:
+    def __init__(self, worksheets):
+        self._worksheets = worksheets
+
+    def worksheets(self):
+        return self._worksheets
+
+
+def _md_title(d: date) -> str:
+    return f"{d.month}/{d.day}"
+
+
+def _make_spreadsheet(third_tab_rows: list[list[str]], days_ago: int = 3):
+    ref_date = date.today() - timedelta(days=days_ago)
+    ws1 = _StubWorksheet(_md_title(ref_date - timedelta(days=2)), [])
+    ws2 = _StubWorksheet(_md_title(ref_date - timedelta(days=1)), [])
+    ws3 = _StubWorksheet(_md_title(ref_date), third_tab_rows)
+    return _StubSpreadsheet([ws1, ws2, ws3])
+
+
+@pytest.mark.asyncio
+async def test_delivery_status_keep(monkeypatch):
+    rows = [
+        ["10000", "user1", "아이템"],
+        ["12000", "user1", "킵"],
+    ]
+    stub = _make_spreadsheet(rows, days_ago=1)
+    monkeypatch.setattr(chat_module, "_get_spreadsheet", lambda: stub)
+
+    res = await chat_module.delivery_status_service(
+        ChatRequest(session_id="s", user_id="user1", message="배송", context=None)
+    )
+    assert "킵" in res.reply
+
+
+@pytest.mark.asyncio
+async def test_delivery_status_delivered_when_paid_and_old(monkeypatch):
+    rows = [
+        ["10000", "user1"],
+        ["5000", "user1"],
+        ["16000", "user1"],
+    ]
+    stub = _make_spreadsheet(rows, days_ago=3)
+    monkeypatch.setattr(chat_module, "_get_spreadsheet", lambda: stub)
+
+    res = await chat_module.delivery_status_service(
+        ChatRequest(session_id="s", user_id="user1", message="배송", context=None)
+    )
+    assert "배송" in res.reply and "2~3일" in res.reply
+
+
+@pytest.mark.asyncio
+async def test_order_status_requests_payment_check_when_not_paid(monkeypatch):
+    rows = [
+        ["10000", "user1"],
+        ["5000", "user1"],
+        ["15000", "user1"],
+    ]
+    stub = _make_spreadsheet(rows, days_ago=0)
+    monkeypatch.setattr(chat_module, "_get_spreadsheet", lambda: stub)
+
+    res = await chat_module.order_status_service(
+        ChatRequest(session_id="s", user_id="user1", message="주문", context=None)
+    )
+    assert "입금" in res.reply and "확인" in res.reply
     
 @pytest.mark.asyncio
 async def test_ai_service_fallback_status_success_check(monkeypatch):
